@@ -15,11 +15,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Random;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 @TestMethodOrder(MethodOrderer.MethodName.class)
@@ -29,7 +27,7 @@ public class DefaultExtractorTest {
     private static final int TEST_FILE_NAME_LENGTH = 10;
 
     private static Supplier<Extractor> extractorSupplier;
-    private static Random random = new Random();
+    private static final     Random random = new Random();
     private static final byte[] space = " ".getBytes(StringUtil.STANDARD_CHARSET);
 
 
@@ -48,7 +46,9 @@ public class DefaultExtractorTest {
         try {
             real = extractorSupplier.get().extractLinks(pathToTestFile);
         } catch (final ExtractorException e) {
+            e.printStackTrace();
             Assertions.fail();
+            return;
         }
         Assertions.assertNotNull(real);
         Assertions.assertEquals(real.size(), expectedResult.size());
@@ -73,32 +73,39 @@ public class DefaultExtractorTest {
         }
         return testFilePath;
     }
-    public void testSequence(final List<URI> expectedResult) {
+
+    public void testSequence(final List<String> inserted, final List<URI> expectedResult) {
+        Collections.shuffle(inserted);
         final Path testFilePath = write(out -> {
-            for (final URI uri: expectedResult) {
-                out.write(uri.toString().getBytes(StringUtil.STANDARD_CHARSET));
+            for (final String uri: inserted) {
+                out.write(uri.getBytes(StringUtil.STANDARD_CHARSET));
                 out.write(System.lineSeparator().getBytes(StringUtil.STANDARD_CHARSET));
             }
         });
         test(testFilePath, expectedResult);
     }
+    public void testSequence(final List<URI> expectedResult) {
+        testSequence(expectedResult.stream().map(URI::toString).collect(Collectors.toCollection(ArrayList::new)), expectedResult);
+    }
 
-    public void testRandom(final List<URI> expectedResult) {
-        final byte[] space = " ".getBytes(StringUtil.STANDARD_CHARSET);
+    public void testRandom(final List<String> inserted, final List<URI> expectedResult) {
+        Collections.shuffle(inserted);
         final Path testFilePath = write((out) -> {
-            for (final URI uri: expectedResult) {
-                final byte[] bytes = new byte[random.nextInt(1024)];
-                random.nextBytes(bytes);
+            for (final String uri: inserted) {
+                final byte[] bytes = StringUtil.generateRandomWord(1024).getBytes(StringUtil.STANDARD_CHARSET);
                 out.write(bytes);
                 out.write(space);
-                out.write(uri.toString().getBytes(StringUtil.STANDARD_CHARSET));
+                out.write(uri.getBytes(StringUtil.STANDARD_CHARSET));
                 out.write(space);
             }
-            final byte[] bytes = new byte[random.nextInt(1024)];
-            random.nextBytes(bytes);
+            final byte[] bytes = StringUtil.generateRandomWord(1).getBytes(StringUtil.STANDARD_CHARSET);
             out.write(bytes);
         });
         test(testFilePath, expectedResult);
+    }
+
+    public void testRandom(final List<URI> expectedResult) {
+        testRandom(expectedResult.stream().map(URI::toString).collect(Collectors.toCollection(ArrayList::new)), expectedResult);
     }
 
     public void testString(final String string, final List<URI> expectedResult) {
@@ -106,19 +113,58 @@ public class DefaultExtractorTest {
         test(testFilePath, expectedResult);
     }
 
-    public void test(final List<URI> expectedResult) {
-        testSequence(expectedResult);
-        testRandom(expectedResult);
+
+    private List<URI> generateURIs(final int count) {
+        return IntStream.range(0, count).mapToObj(it -> URI.create(StringUtil.generateURL())).toList();
     }
 
     public void test(final int count) {
-        testRandom(IntStream.range(0, count).mapToObj(it -> URI.create(StringUtil.generateURL())).toList());
+        testRandom(generateURIs(count));
     }
     @Test
     public void test1_emptyFile() {
         testSequence(List.of());
     }
 
+    @Test
+    public void test2_sequence() {
+        testSequence(IntStream.range(0, 5)
+                .mapToObj(it -> URI.create(StringUtil.generateURL()))
+                .toList());
+    }
+
+    private String glueURIs() {
+        return generateURIs(1).get(0).toString() + "\"glue\"";
+    }
+    @Test
+    public void test3_together() {
+        final List<String> single = List.of(glueURIs());
+        testSequence(single, List.of());
+        testRandom(single, List.of());
+
+        final List<String> several = IntStream.range(0, 10).mapToObj(it -> glueURIs()).collect(Collectors.toCollection(ArrayList::new));
+        testSequence(several, List.of());
+        testRandom(several, List.of());
+    }
+
+    @Test
+    public void test4_togetherMixed() {
+        final List<URI> expected = new ArrayList<>();
+        final List<String> list = IntStream.range(0, 100).mapToObj(it -> {
+            if (Math.random() > 0.5) {
+                final URI uri = generateURIs(1).get(0);
+                expected.add(uri);
+                return uri.toString();
+            } else {
+                return glueURIs();
+            }
+        }).collect(Collectors.toCollection(ArrayList::new));
+       testRandom(list, expected);
+    }
+    @Test
+    public void test5_random() {
+        IntStream.range(0, 10).forEach(it -> test(1000));
+    }
     @AfterAll
     public static void tearDownTestDirectory() throws IOException {
         Files.walkFileTree(testDir, new SimpleFileVisitor<>() {
